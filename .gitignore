@@ -1,0 +1,9 @@
+#cache and temp files
+links.txt
+link_titles.txt
+._new_titles.tmp
+
+#OS/editor noise
+.DS_Store
+*.swp
+*.tmp
