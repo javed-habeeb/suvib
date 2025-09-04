@@ -2,7 +2,7 @@
 
 
 #stream using VLC
-VLC_PATH="/mnt/c/Program Files/VideoLAN/VLC/vlc.exe"
+VLC_PATH="" #add the path to vlc
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EPISODE_FILE="$SCRIPT_DIR/links.txt"
 
