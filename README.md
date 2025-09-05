@@ -49,3 +49,4 @@ you should manually add the path to your vlc into stream.sh
 - `link_titles.txt` is auto-generated cache (don’t edit manually).
 - This script does **not** bypass DRM or geo-blocking.
 - No example URLs are included.
+- Make sure to uncomment the package manager in the install.sh file for your distribution.eg:apt,pacman,brew
