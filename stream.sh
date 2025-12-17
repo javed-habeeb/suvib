@@ -1,10 +1,64 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
+# ---------------------------
+# paths
+# ---------------------------
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/suvib"
+EPISODE_FILE="$DATA_DIR/links.txt"
+TITLE_CACHE="$DATA_DIR/link_titles.txt"
+TMP_CACHE_UPDATE="$DATA_DIR/._new_titles.tmp"
 
-#stream using VLC
-VLC_PATH="" #add the path to vlc
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EPISODE_FILE="$SCRIPT_DIR/links.txt"
+mkdir -p "$DATA_DIR"
+touch "$EPISODE_FILE" "$TITLE_CACHE"
+
+# ---------------------------
+# dependencies
+# ---------------------------
+if ! command -v yt-dlp >/dev/null; then
+    echo "yt-dlp is not installed"
+    exit 1
+fi
+
+VLC_PATH="$(command -v vlc || true)"
+if [[ -z "$VLC_PATH" ]]; then
+    echo "vlc not found in PATH"
+    exit 1
+fi
+
+EDITOR="${EDITOR:-nano}"
+
+# ---------------------------
+# commands
+# ---------------------------
+case "${1:-}" in
+    --edit)
+        "$EDITOR" "$EPISODE_FILE"
+        exit 0
+        ;;
+
+    --add)
+        shift
+        if [[ $# -eq 0 ]]; then
+            echo "Usage: suvib --add <URL> [URL...]"
+            exit 1
+        fi
+
+        for url in "$@"; do
+            if grep -Fxq "$url" "$EPISODE_FILE"; then
+                echo "skipped (exists): $url"
+                continue
+            fi
+            echo "$url" >> "$EPISODE_FILE"
+            echo "added: $url"
+        done
+        exit 0
+        ;;
+esac
+
+# ---------------------------
+# streaming logic (your code)
+# ---------------------------
 
 logo=(
 "  ░▒▓███████▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓███████▓▒░  "
@@ -16,64 +70,33 @@ logo=(
 " ░▒▓███████▓▒░ ░▒▓██████▓▒░   ░▒▓██▓▒░  ░▒▓█▓▒░▒▓███████▓▒░   "
 "                                                             "
 "~~~~~~~|      A STREAMER FROM PROVIDED LINKS     |~~~~~~~~~~"
-)                                                            
+)
 
-
-
-if command -v dos2unix >/dev/null 2>&1; then
-    dos2unix "$EPISODE_FILE" >/dev/null 2>&1
-fi
-
-TITLE_CACHE="$SCRIPT_DIR/link_titles.txt"
-TMP_CACHE_UPDATE="$SCRIPT_DIR/._new_titles.tmp"
-
-
-#checking if yt-dlp is available
-if ! command -v yt-dlp >/dev/null 2>&1; then
-    echo "yt-dlp is not installed"
-    exit 1
-fi
-
-#check if vlc path is valid
-if [[ ! -f "$VLC_PATH" ]]; then
-    echo "vlc not found at $VLC_PATH"
-    exit 1
-fi
-
-#if episodes list exists
-if [[ ! -f "$EPISODE_FILE" ]]; then
-    echo "episodes.txt not found. add url's to it"
-    exit 1
-fi
-
-#load episodes list
 mapfile -t EPISODES < <(grep -v '^\s*$' "$EPISODE_FILE")
 
-#declare associative array for URL -> title
+if [[ ${#EPISODES[@]} -eq 0 ]]; then
+    echo "No links found. Use: suvib --add <URL>"
+    exit 1
+fi
+
 declare -A TITLE_MAP
 
-#load if cache exists
 if [[ -f "$TITLE_CACHE" ]]; then
     while IFS= read -r line; do
-        CLEAN=$(echo "$line" | tr -d '\r' | xargs)
-        URL="${CLEAN%%:::*}"
-        TITLE="${CLEAN#*:::}"
+        URL="${line%%:::*}"
+        TITLE="${line#*:::}"
         [[ -n "$URL" && -n "$TITLE" ]] && TITLE_MAP["$URL"]="$TITLE"
     done < "$TITLE_CACHE"
 fi
 
-#prepare new title file
 > "$TMP_CACHE_UPDATE"
 
-#display the numbered menu
 printf "%s\n" "${logo[@]}"
 for i in "${!EPISODES[@]}"; do
-    URL="$(echo "${EPISODES[$i]}" | tr -d '\r' | xargs)"
+    URL="${EPISODES[$i]}"
 
-    if [[ -z "${TITLE_MAP[$URL]+found}" ]]; then
-        echo "[debug] title for $URL NOT in cache. fetching via yt-dlp"
-        TITLE=$(yt-dlp --get-title "$URL" 2>/dev/null || echo "[Unknown Title]")
-        [[ -z "$TITLE" ]] && TITLE="[unsupported or offline]"
+    if [[ -z "${TITLE_MAP[$URL]+x}" ]]; then
+        TITLE=$(yt-dlp --get-title "$URL" 2>/dev/null || echo "[Unknown]")
         TITLE_MAP["$URL"]="$TITLE"
         echo "$URL:::$TITLE" >> "$TMP_CACHE_UPDATE"
     else
@@ -83,33 +106,13 @@ for i in "${!EPISODES[@]}"; do
     printf "%2d) %s\n" $((i + 1)) "$TITLE"
 done
 
-#append only newer entries
-if [[ -s "$TMP_CACHE_UPDATE" ]]; then
-    awk '!seen[$0]++' "$TMP_CACHE_UPDATE" >> "$TITLE_CACHE"
-
-fi
-
+[[ -s "$TMP_CACHE_UPDATE" ]] && awk '!seen[$0]++' "$TMP_CACHE_UPDATE" >> "$TITLE_CACHE"
 rm -f "$TMP_CACHE_UPDATE"
 
-
-#selection prompt
-read -p "choose episode number: " CHOICE
-
-if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > ${#EPISODES[@]} )); then
-    echo "invalid choice"
-    exit 1
-fi
+read -rp "choose episode number: " CHOICE
+(( CHOICE >= 1 && CHOICE <= ${#EPISODES[@]} )) || exit 1
 
 URL="${EPISODES[$((CHOICE - 1))]}"
 
-echo "extracting stream from: $URL"
-STREAM_URL=$(yt-dlp -f "best[ext=mp4][protocol^=http]" -g "$URL" 2>/dev/null)
-
-if [[ -z "$STREAM_URL" ]]; then
-    echo "Stream extraction failed"
-    exit 1
-fi
-
-echo "playing vlc..."
+STREAM_URL=$(yt-dlp -f "best[ext=mp4][protocol^=http]" -g "$URL")
 "$VLC_PATH" --fullscreen --no-video-title-show "$STREAM_URL"
-
